@@ -1,0 +1,174 @@
+# Frontend ConfigMap with HTML content
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: frontend-html
+  namespace: flash
+data:
+  index.html: |
+    <!DOCTYPE html>
+    <html>
+    <head>
+      <meta charset="UTF-8">
+      <title>Traffic Flow Demo</title>
+      <style>
+        body { 
+          font-family: Arial, sans-serif; 
+          margin: 40px; 
+          text-align: center;
+        }
+        h1 { color: #333; }
+        button {
+          background-color: #4CAF50;
+          border: none;
+          color: white;
+          padding: 15px 32px;
+          text-align: center;
+          font-size: 16px;
+          margin: 20px;
+          cursor: pointer;
+          border-radius: 8px;
+        }
+        #result {
+          margin-top: 20px;
+          padding: 10px;
+          border: 1px solid #ddd;
+          border-radius: 4px;
+          min-height: 100px;
+        }
+        #autoResult {
+          margin-top: 20px;
+          padding: 10px;
+          border: 1px solid #ddd;
+          border-radius: 4px;
+          min-height: 100px;
+          background-color: #f9f9f9;
+        }
+        .status-indicator {
+          display: inline-block;
+          width: 12px;
+          height: 12px;
+          border-radius: 50%;
+          margin-right: 8px;
+        }
+        .active {
+          background-color: #4CAF50;
+        }
+        .inactive {
+          background-color: #f44336;
+        }
+        .controls {
+          margin: 20px;
+        }
+      </style>
+    </head>
+    <body>
+      <h1>Traffic Flow Demo for Hubble</h1>
+      
+      <div class="controls">
+        <p>
+          <span class="status-indicator" id="autoStatus"></span>
+          <span id="autoStatusText">자동 호출: 활성화 중...</span>
+          <button id="toggleAuto">자동 호출 끄기</button>
+        </p>
+        <p>Click the button to manually initiate a request that will flow through multiple services and reach GitHub.</p>
+        <button id="startFlow">Start Traffic Flow</button>
+      </div>
+      
+      <h3>수동 요청 결과:</h3>
+      <div id="result">Results will appear here...</div>
+      
+      <h3>자동 요청 결과:</h3>
+      <div id="autoResult">Automatic request results will appear here...</div>
+
+      <script>
+        // 수동 트래픽 생성 함수
+        function manualTrafficFlow() {
+          document.getElementById('result').innerHTML = 'Sending request to middleware service...';
+          
+          fetch('/api/start-flow')
+            .then(response => {
+              if (!response.ok) {
+                throw new Error('Network response was not ok: ' + response.status);
+              }
+              return response.text();
+            })
+            .then(data => {
+              document.getElementById('result').innerHTML = data;
+            })
+            .catch(error => {
+              document.getElementById('result').innerHTML = 'Error: ' + error.message;
+              console.error('Fetch error:', error);
+            });
+        }
+        
+        // 자동 트래픽 생성 함수
+        function autoTrafficFlow() {
+          document.getElementById('autoResult').innerHTML = 'Sending automatic request to middleware service...';
+          
+          fetch('/api/start-flow')
+            .then(response => {
+              if (!response.ok) {
+                throw new Error('Network response was not ok: ' + response.status);
+              }
+              return response.text();
+            })
+            .then(data => {
+              const now = new Date().toLocaleTimeString();
+              document.getElementById('autoResult').innerHTML = `[${now}] ${data}`;
+            })
+            .catch(error => {
+              const now = new Date().toLocaleTimeString();
+              document.getElementById('autoResult').innerHTML = `[${now}] Error: ${error.message}`;
+              console.error('Auto fetch error:', error);
+            });
+        }
+
+        // 수동 버튼 이벤트 리스너
+        document.getElementById('startFlow').addEventListener('click', manualTrafficFlow);
+        
+        // 자동 호출 상태 관리
+        let autoCallEnabled = true;
+        let autoCallInterval;
+        
+        // 자동 호출 토글 함수
+        function toggleAutoCall() {
+          autoCallEnabled = !autoCallEnabled;
+          
+          if (autoCallEnabled) {
+            // 자동 호출 시작
+            startAutoCall();
+            document.getElementById('toggleAuto').textContent = '자동 호출 끄기';
+            document.getElementById('autoStatusText').textContent = '자동 호출: 활성화 중...';
+            document.getElementById('autoStatus').classList.remove('inactive');
+            document.getElementById('autoStatus').classList.add('active');
+          } else {
+            // 자동 호출 중지
+            clearInterval(autoCallInterval);
+            document.getElementById('toggleAuto').textContent = '자동 호출 켜기';
+            document.getElementById('autoStatusText').textContent = '자동 호출: 비활성화';
+            document.getElementById('autoStatus').classList.remove('active');
+            document.getElementById('autoStatus').classList.add('inactive');
+          }
+        }
+        
+        // 자동 호출 시작 함수
+        function startAutoCall() {
+          // 즉시 한 번 호출
+          autoTrafficFlow();
+          
+          // 3초마다 호출 설정
+          autoCallInterval = setInterval(autoTrafficFlow, 3000);
+        }
+        
+        // 토글 버튼 이벤트 리스너
+        document.getElementById('toggleAuto').addEventListener('click', toggleAutoCall);
+        
+        // 페이지 로드시 자동 호출 시작
+        document.addEventListener('DOMContentLoaded', function() {
+          document.getElementById('autoStatus').classList.add('active');
+          startAutoCall();
+        });
+      </script>
+    </body>
+    </html>

@@ -1,0 +1,55 @@
+# Middleware App (App2) Deployment
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: middleware-app
+  namespace: flash
+  labels:
+    app: middleware-app
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: middleware-app
+  template:
+    metadata:
+      labels:
+        app: middleware-app
+    spec:
+      containers:
+      - name: middleware
+        image: python:3.9-alpine
+        ports:
+        - containerPort: 8080
+        command: ["/bin/sh", "-c"]
+        args:
+        - |
+          pip install flask requests && \
+          cat > /app.py << 'EOF'
+          from flask import Flask, jsonify, request
+          import requests
+          import time
+          import sys
+          
+          app = Flask(__name__)
+          
+          @app.route('/', methods=['GET'])
+          def handle_request():
+              print("Middleware received request", file=sys.stderr)
+              print(f"Request headers: {dict(request.headers)}", file=sys.stderr)
+              
+              try:
+                  # Call the backend service
+                  backend_url = "http://backend-service:9000/"
+                  print(f"Calling backend at {backend_url}", file=sys.stderr)
+                  response = requests.get(backend_url, timeout=10)
+                  return f"Middleware: Successfully called backend. Response: {response.text}"
+              except Exception as e:
+                  print(f"Error: {str(e)}", file=sys.stderr)
+                  return f"Middleware: Error calling backend: {str(e)}"
+
+          if __name__ == '__main__':
+              print("Starting middleware server...", file=sys.stderr)
+              app.run(host='0.0.0.0', port=8080)
+          EOF
+          python /app.py

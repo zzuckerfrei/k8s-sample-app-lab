@@ -1,0 +1,556 @@
+# Namespace 선언
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: flash-store
+
+---
+# Web Tier - Frontend Deployment
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: flash-web
+  namespace: flash-store
+  labels:
+    app: flash-web
+    tier: frontend
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: flash-web
+      tier: frontend
+  template:
+    metadata:
+      labels:
+        app: flash-web
+        tier: frontend
+    spec:
+      containers:
+      - name: flash-web
+        image: nginx:alpine
+        ports:
+        - containerPort: 80
+        volumeMounts:
+        - name: nginx-config
+          mountPath: /usr/share/nginx/html
+        - name: nginx-conf
+          mountPath: /etc/nginx/conf.d
+      volumes:
+      - name: nginx-config
+        configMap:
+          name: frontend-html
+      - name: nginx-conf
+        configMap:
+          name: nginx-conf
+
+---
+# Web Tier - Frontend Service (LoadBalancer type)
+apiVersion: v1
+kind: Service
+metadata:
+  name: flash-web-service
+  namespace: flash-store
+  labels:
+    app: flash-web
+    tier: frontend
+spec:
+  type: LoadBalancer
+  ports:
+  - port: 80
+    targetPort: 80
+    protocol: TCP
+    name: http
+  selector:
+    app: flash-web
+    tier: frontend
+
+---
+# Web Tier - Frontend HTML ConfigMap
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: frontend-html
+  namespace: flash-store
+data:
+  index.html: |
+    <!DOCTYPE html>
+    <html>
+    <head>
+      <meta charset="UTF-8">
+      <title>Flash Store</title>
+      <style>
+        body { 
+          font-family: Arial, sans-serif; 
+          margin: 40px; 
+          text-align: center;
+          background-color: #f8f9fa;
+        }
+        h1 { 
+          color: #333;
+          margin-bottom: 30px; 
+        }
+        button {
+          background-color: #4CAF50;
+          border: none;
+          color: white;
+          padding: 15px 32px;
+          text-align: center;
+          font-size: 16px;
+          margin: 20px;
+          cursor: pointer;
+          border-radius: 8px;
+          box-shadow: 0 4px 8px rgba(0,0,0,0.1);
+          transition: all 0.3s;
+        }
+        button:hover {
+          background-color: #45a049;
+          transform: translateY(-2px);
+          box-shadow: 0 6px 12px rgba(0,0,0,0.15);
+        }
+        #result {
+          margin: 20px auto;
+          padding: 20px;
+          border: 1px solid #ddd;
+          border-radius: 8px;
+          min-height: 100px;
+          width: 80%;
+          max-width: 800px;
+          text-align: left;
+          background-color: white;
+          box-shadow: 0 2px 4px rgba(0,0,0,0.05);
+        }
+        .transaction {
+          padding: 10px;
+          margin-bottom: 10px;
+          border-bottom: 1px solid #eee;
+        }
+        .transaction-time {
+          color: #666;
+          font-size: 0.9em;
+        }
+        .transaction-data {
+          margin-top: 5px;
+        }
+        .header {
+          background-color: #333;
+          color: white;
+          padding: 20px;
+          border-radius: 8px 8px 0 0;
+          margin-bottom: 30px;
+        }
+      </style>
+    </head>
+    <body>
+      <div class="header">
+        <h1>Flash Store Application</h1>
+      </div>
+      
+      <div>
+        <h2>Make a New Transaction</h2>
+        <p>Click the button below to send a request to the server. This will create a new transaction in the database and make an external API call.</p>
+        <button id="sendTransaction">Process New Transaction</button>
+      </div>
+      
+      <h2>Transaction Results:</h2>
+      <div id="result">No transactions processed yet. Click the button above to start.</div>
+
+      <script>
+        // DOM elements
+        const transactionButton = document.getElementById('sendTransaction');
+        const resultContainer = document.getElementById('result');
+        
+        // Process transaction function
+        function processTransaction() {
+          resultContainer.innerHTML = '<p>Processing transaction...</p>';
+          
+          fetch('/api/transaction')
+            .then(response => {
+              if (!response.ok) {
+                throw new Error('Network response was not ok: ' + response.status);
+              }
+              return response.json();
+            })
+            .then(data => {
+              const now = new Date().toLocaleTimeString();
+              
+              // Create new transaction element
+              const transactionEl = document.createElement('div');
+              transactionEl.className = 'transaction';
+              
+              transactionEl.innerHTML = `
+                <div class="transaction-time">Transaction processed at: ${now}</div>
+                <div class="transaction-data">
+                  <p>Transaction ID: ${data.transactionId}</p>
+                  <p>Database Status: ${data.dbStatus}</p>
+                  <p>External API Call: ${data.externalApiStatus}</p>
+                </div>
+              `;
+              
+              // Replace "Processing transaction..." with the new transaction
+              resultContainer.innerHTML = '';
+              resultContainer.appendChild(transactionEl);
+            })
+            .catch(error => {
+              resultContainer.innerHTML = `<p>Error: ${error.message}</p>`;
+              console.error('Fetch error:', error);
+            });
+        }
+        
+        // Add event listener to the button
+        transactionButton.addEventListener('click', processTransaction);
+      </script>
+    </body>
+    </html>
+
+---
+# Web Tier - Nginx Configuration ConfigMap
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: nginx-conf
+  namespace: flash-store
+data:
+  default.conf: |
+    server {
+        listen 80;
+        server_name localhost;
+
+        location / {
+            root   /usr/share/nginx/html;
+            index  index.html index.htm;
+        }
+
+        # Proxy /api requests to WAS service
+        location /api/ {
+            proxy_pass http://flash-was-service:8080/;
+            proxy_set_header Host $host;
+            proxy_set_header X-Real-IP $remote_addr;
+            proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+            proxy_set_header X-Forwarded-Proto $scheme;
+            proxy_http_version 1.1;
+        }
+
+        error_page   500 502 503 504  /50x.html;
+        location = /50x.html {
+            root   /usr/share/nginx/html;
+        }
+    }
+
+---
+# WAS Tier - Application Deployment
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: flash-was
+  namespace: flash-store
+  labels:
+    app: flash-was
+    tier: middleware
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: flash-was
+      tier: middleware
+  template:
+    metadata:
+      labels:
+        app: flash-was
+        tier: middleware
+    spec:
+      containers:
+      - name: flash-was
+        image: python:3.9-alpine
+        ports:
+        - containerPort: 8080
+        env:
+        - name: MONGODB_URI
+          value: "mongodb://flash-db-0.flash-db-service:27017,flash-db-1.flash-db-service:27017,flash-db-2.flash-db-service:27017/flash-store?replicaSet=MainRepSet"
+        command: ["/bin/sh", "-c"]
+        args:
+        - |
+          pip install flask requests pymongo && \
+          cat > /app.py << 'EOF'
+          from flask import Flask, jsonify, request
+          import requests
+          import time
+          import sys
+          import uuid
+          import datetime
+          import pymongo
+          from pymongo import MongoClient
+          import os
+          
+          app = Flask(__name__)
+          
+          # MongoDB connection
+          mongodb_uri = os.environ.get('MONGODB_URI', 'mongodb://flash-db-0.flash-db-service:27017,flash-db-1.flash-db-service:27017,flash-db-2.flash-db-service:27017/flash-store?replicaSet=MainRepSet')
+          
+          def get_db():
+              try:
+                  client = MongoClient(mongodb_uri, serverSelectionTimeoutMS=5000)
+                  # Test connection by making a small request
+                  client.admin.command('ping')
+                  db = client['flash-store']
+                  return db
+              except Exception as e:
+                  print(f"Error connecting to MongoDB: {str(e)}", file=sys.stderr)
+                  return None
+          
+          @app.route('/', methods=['GET'])
+          def index():
+              return jsonify({"status": "Flash Store WAS is running"})
+          
+          @app.route('/transaction', methods=['GET'])
+          def process_transaction():
+              transaction_id = str(uuid.uuid4())
+              timestamp = datetime.datetime.now().isoformat()
+              
+              print(f"Processing transaction {transaction_id}", file=sys.stderr)
+              
+              # Step 1: Store transaction in MongoDB
+              db_status = "Failed"
+              try:
+                  db = get_db()
+                  if db is not None:
+                      transactions = db.transactions
+                      transaction_data = {
+                          "transaction_id": transaction_id,
+                          "timestamp": timestamp,
+                          "status": "completed",
+                          "details": {
+                              "source": "web",
+                              "processed_at": timestamp
+                          }
+                      }
+                      result = transactions.insert_one(transaction_data)
+                      if result.inserted_id:
+                          db_status = "Success"
+                          print(f"Transaction {transaction_id} stored in database", file=sys.stderr)
+                      else:
+                          print(f"Failed to store transaction {transaction_id} in database", file=sys.stderr)
+                  else:
+                      print("Database connection failed", file=sys.stderr)
+              except Exception as e:
+                  error_message = str(e)
+                  print(f"Database error: {error_message}", file=sys.stderr)
+                  db_status = f"Error: {error_message}"
+              
+              # Step 2: Call external API (GitHub)
+              external_api_status = "Failed"
+              try:
+                  github_url = "https://github.com"
+                  print(f"Calling external service at {github_url}", file=sys.stderr)
+                  response = requests.get(github_url, timeout=10)
+                  if response.status_code == 200:
+                      external_api_status = f"Success (Status code: {response.status_code})"
+                  else:
+                      external_api_status = f"Error (Status code: {response.status_code})"
+              except Exception as e:
+                  error_message = str(e)
+                  print(f"External API error: {error_message}", file=sys.stderr)
+                  external_api_status = f"Error: {error_message}"
+              
+              # Return response
+              response_data = {
+                  "transactionId": transaction_id,
+                  "timestamp": timestamp,
+                  "dbStatus": db_status,
+                  "externalApiStatus": external_api_status
+              }
+              
+              return jsonify(response_data)
+          
+          if __name__ == '__main__':
+              print("Starting Flash Store WAS server...", file=sys.stderr)
+              app.run(host='0.0.0.0', port=8080)
+          EOF
+          python /app.py
+
+---
+# WAS Tier - Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: flash-was-service
+  namespace: flash-store
+  labels:
+    app: flash-was
+    tier: middleware
+spec:
+  ports:
+  - port: 8080
+    targetPort: 8080
+    protocol: TCP
+    name: http
+  selector:
+    app: flash-was
+    tier: middleware
+
+---
+# DB Tier - MongoDB StatefulSet
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: flash-db
+  namespace: flash-store
+  labels:
+    app: flash-db
+    tier: database
+spec:
+  persistentVolumeClaimRetentionPolicy:
+    whenDeleted: Retain
+    whenScaled: Retain
+  podManagementPolicy: OrderedReady
+  replicas: 3
+  revisionHistoryLimit: 10
+  selector:
+    matchLabels:
+      app: flash-db
+      tier: database
+  serviceName: flash-db-service
+  template:
+    metadata:
+      labels:
+        app: flash-db
+        tier: database
+    spec:
+      containers:
+      - name: mongodb
+        image: mongo:4.2
+        command:
+        - mongod
+        - --replSet
+        - MainRepSet
+        - --bind_ip
+        - '*'
+        ports:
+        - containerPort: 27017
+          protocol: TCP
+        livenessProbe:
+          exec:
+            command:
+            - mongo
+            - --eval
+            - "db.adminCommand('ping')"
+          initialDelaySeconds: 30
+          periodSeconds: 10
+          timeoutSeconds: 5
+          successThreshold: 1
+          failureThreshold: 3
+        readinessProbe:
+          exec:
+            command:
+            - mongo
+            - --eval
+            - "db.adminCommand('ping')"
+          initialDelaySeconds: 30
+          periodSeconds: 10
+          timeoutSeconds: 5
+          successThreshold: 1
+          failureThreshold: 3
+        volumeMounts:
+        - mountPath: /data/db
+          name: mongodb-data
+      terminationGracePeriodSeconds: 30
+  volumeClaimTemplates:
+  - apiVersion: v1
+    kind: PersistentVolumeClaim
+    metadata:
+      name: mongodb-data
+    spec:
+      accessModes:
+      - ReadWriteMany
+      resources:
+        requests:
+          storage: 1Gi
+      storageClassName: nks-nas-csi
+
+---
+# DB Tier - MongoDB Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: flash-db-service
+  namespace: flash-store
+  labels:
+    app: flash-db
+    tier: database
+spec:
+  clusterIP: None
+  ports:
+  - port: 27017
+    targetPort: 27017
+    protocol: TCP
+    name: mongodb
+  selector:
+    app: flash-db
+    tier: database
+
+---
+# MongoDB Init ConfigMap for replica set initialization
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: mongo-init
+  namespace: flash-store
+data:
+  init.sh: |
+    #!/bin/bash
+    
+    echo "Waiting for MongoDB pods to be ready..."
+    
+    # 각 MongoDB 인스턴스가 준비될 때까지 기다립니다
+    for i in 0 1 2; do
+      until mongo --host flash-db-$i.flash-db-service:27017 --eval "db.adminCommand('ping')" > /dev/null 2>&1; do
+        echo "Waiting for flash-db-$i.flash-db-service to be ready..."
+        sleep 10
+      done
+      echo "flash-db-$i.flash-db-service is ready!"
+    done
+    
+    echo "All MongoDB pods are ready. Initializing Replica Set..."
+    
+    # 레플리카셋 초기화
+    mongo --host flash-db-0.flash-db-service:27017 --eval "rs.initiate({
+      _id: 'MainRepSet',
+      members: [
+        {_id: 0, host: 'flash-db-0.flash-db-service:27017'},
+        {_id: 1, host: 'flash-db-1.flash-db-service:27017'},
+        {_id: 2, host: 'flash-db-2.flash-db-service:27017'}
+      ]
+    })"
+    
+    echo "Waiting for replica set to stabilize..."
+    sleep 30
+    
+    # 레플리카셋 상태 확인
+    mongo --host flash-db-0.flash-db-service:27017 --eval "rs.status()"
+    
+    echo "Replica Set initialization completed."
+
+---
+# MongoDB Init Job
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: mongo-init-job
+  namespace: flash-store
+spec:
+  backoffLimit: 4
+  template:
+    spec:
+      containers:
+      - name: mongo-init
+        image: mongo:4.2
+        command: ["/bin/sh", "/scripts/init.sh"]
+        volumeMounts:
+        - name: init-script
+          mountPath: /scripts
+      restartPolicy: OnFailure
+      volumes:
+      - name: init-script
+        configMap:
+          name: mongo-init
+          defaultMode: 0777
